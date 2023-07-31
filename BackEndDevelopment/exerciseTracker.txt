@@ -1,0 +1,128 @@
+const express = require('express')
+const app = express()
+const cors = require('cors')
+const { MongoClient } = require('mongodb')
+const  ObjectId = require('mongodb').ObjectId;
+require('dotenv').config()
+
+const client = new MongoClient(process.env.DB_URL);
+const db = client.db("ExerciseTracker");
+const users = db.collection("users");
+const exercises = db.collection("exercises");
+const logs = db.collection("logs");
+
+app.use(express.json())
+app.use(express.urlencoded({extended: true}))
+
+app.use(cors())
+app.use(express.static('public'))
+app.get('/', (req, res) => {
+  res.sendFile(__dirname + '/views/index.html')
+});
+
+app.post('/api/users', async (req, res) => {
+  const username = req.body.username;
+  const insertResult = await users.insertOne( { username } );
+  const user = await users.findOne( { username } )
+  res.json( { username, _id: user._id} );
+})
+
+app.post('/api/users/:_id/exercises', async (req, res) => {
+  const _id = req.params._id;
+  const description = req.body.description;
+  const duration = Number(req.body.duration);
+  let date = req.body.date;
+  date = (typeof date == "undefined" ? new Date() : new Date(date) ).toDateString();
+  let username = await users.findOne( { "_id": new ObjectId(_id) } );
+  
+  if(username != null){
+    username = username.username;
+    const insertResult = await exercises.insertOne( { username, description, duration, date, user_id: _id } ) 
+    res.json( { username, description, duration, date, _id: _id } )
+  
+    const log = await logs.findOne( { user_id: _id } )
+    if(log == null){
+      logs.insertOne( { username, count: 1, user_id: _id, log: [{ description, duration, date }] } )
+    } else {
+      let count = await logs.findOne({ user_id: _id });
+      count = count.count;
+      logs.updateOne( { user_id: _id }, { $set: { count: Number(count)+1 }, $push: { log: { description, duration, date } } })
+    }
+    
+  } else {
+    res.send("Invalid ID");
+  }
+  
+});
+
+app.get('/api/users/', async (req, res) => {
+    const findResult = await users.find({}).toArray(function (err, docs) {
+        db.close();
+        if (err) {
+            console.log('Error');
+            console.log(err);
+            res.end();
+        }
+        else {
+            console.log('Success');
+            console.log(docs);
+            res.json(docs);
+        }
+    })
+    console.log(findResult);
+    res.send( findResult );
+});
+
+app.get('/api/users/:_id/logs', async (req, res) => {
+  const { from, to, limit } = req.query;
+  const _id = req.params._id;
+
+  const user = await users.findOne( { "_id": new ObjectId(_id) } );
+  
+  if(user != null){
+    const log = await logs.findOne( { "user_id": _id } );
+    /*if(log != null && typeof from == "undefined"){ 
+      res.json( { username: user.username, _id: user.user_id, count: log.count, log: log.log } );
+    } else if(log != null && typeof from != "undefined" && typeof to != "undefined" && typeof limit != "undefined"){
+
+      let filteredArray = log.log.filter((cur) => cur.date >= new Date(from) && cur.date <= new Date(to))
+      /*filteredArray.forEach((element, index) => {
+        filteredArray[index] = element.date.toISOString().split('T')[0];
+      })
+
+      res.json( { username: user.username, _id: user.user_id, count: log.count, log: filteredArray.slice(0, limit) } );
+    }*/
+  
+    if(log != null){
+      let logs = log.log;
+      console.log(logs)
+      if(typeof from != "undefined"){
+        logs = logs.filter((cur) => +(new Date(cur.date)) >= +(new Date(from)))
+      }
+      if(typeof to != "undefined"){
+        logs = logs.filter((cur) => +(new Date(cur.date)) <= +(new Date(to)))
+      }
+      if(typeof limit != "undefined"){
+        logs = logs.slice(0, limit)
+      }
+
+      res.json( { username: user.username, _id: user.user_id, count: log.count, log: logs } );
+    }
+    else{
+      res.json( { username: user.username, _id: user.user_id, count: 0, log: [] } );
+    }
+  } else{
+    res.send("Invalid ID");
+  }
+});
+
+//console.log( log == null ? "y": "n") //is defined test
+/*
+users.deleteMany({})
+logs.deleteMany({})
+exercises.deleteMany({})
+*/
+
+const listener = app.listen(process.env.PORT || 3000, () => {
+  console.log('Your app is listening on port ' + listener.address().port)
+})
